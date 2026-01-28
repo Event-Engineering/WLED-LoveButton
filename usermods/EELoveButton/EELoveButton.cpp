@@ -19,19 +19,14 @@ class EELoveButtonUsermod : public Usermod {
     bool mcpConnected = false;
 
     // Private class members. You can declare variables and functions only accessible to your usermod here
-    bool enabled = false;
-    bool initDone = false;
-    unsigned long lastTime = 0;
 
-    // EE-LoveButton configuration (shown on Usermod Settings page)
-    // Number of button presses required to enter "love" mode
+    bool buttonState = true;    
+    int pressCount = 0;
+
+
     uint16_t pressesToLove = 10;
-    // How long love mode should last (milliseconds)
-    uint16_t loveTimeoutMs = 2500;
-    // WLED preset to activate while in love mode
     uint16_t lovePreset = 10;
-    // WLED preset to restore when leaving love mode
-    uint16_t normalPreset = 1;
+
 
     // strings that are used multiple time (this will save some flash memory)
     static const char _name[];
@@ -41,17 +36,6 @@ class EELoveButtonUsermod : public Usermod {
   public:
 
     // non WLED related methods, may be used for data exchange between usermods (non-inline methods should be defined out of class)
-
-    /**
-     * Enable/Disable the usermod
-     */
-    inline void enable(bool enable) { enabled = enable; }
-
-    /**
-     * Get usermod enabled/disabled state
-     */
-    inline bool isEnabled() { return enabled; }
-
 
     // methods called by WLED (can be inlined as they are called only once but if you call them explicitly define them out of class)
 
@@ -67,19 +51,9 @@ class EELoveButtonUsermod : public Usermod {
         } else {
             Serial.println("Not Connected to MCP Switch Interface");
         }
-        // serializeConfig(); // slow but forces a sync with the settings system
-
-      initDone = true;
     }
 
 
-    /*
-     * connected() is called every time the WiFi is (re)connected
-     * Use it to initialize network interfaces
-     */
-    void connected() override {
-      // Optional: react to WiFi connectivity here.
-    }
 
 
     /*
@@ -95,59 +69,25 @@ class EELoveButtonUsermod : public Usermod {
     void loop() override {
       // if usermod is disabled or called during strip updating just exit
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
-      if (!enabled || strip.isUpdating()) return;
+      if (strip.isUpdating()) return;
 
-      // Example heartbeat; replace with actual LoveButton behaviour
-      if (millis() - lastTime > 1000) {
-        lastTime = millis();
-      }
-    }
+      if (!mcpConnected) return;
 
 
-    /*
-     * addToJsonInfo() can be used to add custom entries to the /json/info part of the JSON API.
-     * Creating an "u" object allows you to add custom key/value pairs to the Info section of the WLED web UI.
-     */
-    void addToJsonInfo(JsonObject& root) override
-    {
-      // if "u" object does not exist yet we need to create it
-      JsonObject user = root["u"];
-      if (user.isNull()) user = root.createNestedObject("u");
-
-      // Example: publish LoveButton related info here if desired
-      // JsonArray arr = user.createNestedArray(FPSTR(_name));
-      // arr.add(1);          // value
-      // arr.add(F(" unit")); // unit
-    }
-
-
-    /*
-     * addToJsonState() can be used to add custom entries to the /json/state part of the JSON API (state object).
-     * Values in the state object may be modified by connected clients
-     */
-    void addToJsonState(JsonObject& root) override
-    {
-      if (!initDone || !enabled) return;  // prevent crash on boot applyPreset()
-
-      JsonObject usermod = root[FPSTR(_name)];
-      if (usermod.isNull()) usermod = root.createNestedObject(FPSTR(_name));
-
-      //usermod["user0"] = userVar0;
-    }
-
-
-    /*
-     * readFromJsonState() can be used to receive data clients send to the /json/state part of the JSON API (state object).
-     * Values in the state object may be modified by connected clients
-     */
-    void readFromJsonState(JsonObject& root) override
-    {
-      if (!initDone) return;  // prevent crash on boot applyPreset()
-
-      JsonObject usermod = root[FPSTR(_name)];
-      if (!usermod.isNull()) {
-        // Handle incoming /json/state updates for EE-LoveButton here if needed
-      }
+       if (buttonState != mcp.digitalRead(0)) {
+          buttonState = mcp.digitalRead(0);
+          if (buttonState == HIGH) {
+              pressCount++;
+              Serial.print("Button pressed ");
+              Serial.print(pressCount);
+              Serial.println(" times");
+              if (pressCount >= pressesToLove) {
+                  Serial.println("Entering love mode!");
+                  applyPreset(lovePreset);
+                  pressCount = 0;
+              }
+          }
+       }
     }
 
 
@@ -158,13 +98,10 @@ class EELoveButtonUsermod : public Usermod {
     void addToConfig(JsonObject& root) override
     {
       JsonObject top = root.createNestedObject(FPSTR(_name));
-      top[FPSTR(_enabled)] = enabled;
 
       // EE-LoveButton settings
       top[F("Number of button presses to trigger love")] = pressesToLove;
-      top[F("Love timeout")] = loveTimeoutMs;
       top[F("Love preset number")] = lovePreset;
-      top[F("Normal preset number")] = normalPreset;
     }
 
 
@@ -180,65 +117,9 @@ class EELoveButtonUsermod : public Usermod {
 
       // A 3-argument getJsonValue() assigns the 3rd argument as a default value if the Json value is missing
       configComplete &= getJsonValue(top[F("Number of button presses to trigger love")], pressesToLove, 10);
-      configComplete &= getJsonValue(top[F("Love timeout")], loveTimeoutMs, 2500);
       configComplete &= getJsonValue(top[F("Love preset number")], lovePreset, 10);
-      configComplete &= getJsonValue(top[F("Normal preset number")], normalPreset, 1);
 
       return configComplete;
-    }
-
-
-    /*
-     * appendConfigData() is called when user enters usermod settings page
-     * it may add additional metadata for certain entry fields (adding drop down is possible)
-     * be careful not to add too much as oappend() buffer is limited to 3k
-     */
-    void appendConfigData() override
-    {
-      // Optional helper text for settings page
-      oappend(F("addInfo('")); oappend(String(FPSTR(_name)).c_str()); oappend(F(":Love timeout")); oappend(F("',1,'milliseconds to stay in love before timing out');"));
-    }
-
-
-    /*
-     * handleOverlayDraw() is called just before every show() (LED strip update frame) after effects have set the colors.
-     * Use this to blank out some LEDs or set them to a different color regardless of the set effect mode.
-     */
-    void handleOverlayDraw() override
-    {
-      // Example: blank out the first pixel
-      // strip.setPixelColor(0, RGBW32(0,0,0,0));
-    }
-
-
-    /**
-     * handleButton() can be used to override default button behaviour. Returning true
-     * will prevent button working in a default way.
-     */
-    bool handleButton(uint8_t b) override {
-      yield();
-      // ignore certain button types as they may have other consequences
-      if (!enabled
-       || buttons[b].type == BTN_TYPE_NONE
-       || buttons[b].type == BTN_TYPE_RESERVED
-       || buttons[b].type == BTN_TYPE_PIR_SENSOR
-       || buttons[b].type == BTN_TYPE_ANALOG
-       || buttons[b].type == BTN_TYPE_ANALOG_INVERTED) {
-        return false;
-      }
-
-      bool handled = false;
-      // TODO: implement EE-LoveButton specific button handling here
-      return handled;
-    }
-
-
-    /**
-     * onStateChange() is used to detect WLED state change
-     * @mode parameter is CALL_MODE_... parameter used for notifications
-     */
-    void onStateChange(uint8_t mode) override {
-      // do something if WLED state changed (color, brightness, effect, preset, etc)
     }
 
 
@@ -251,14 +132,11 @@ class EELoveButtonUsermod : public Usermod {
       return USERMOD_ID_UNSPECIFIED;
     }
 
-   //More methods can be added in the future, this example will then be extended.
-   //Your usermod will remain compatible as it does not need to implement all methods from the Usermod base class!
 };
 
 
 // add more strings here to reduce flash memory usage
 const char EELoveButtonUsermod::_name[]    PROGMEM = "EE-LoveButton";
-const char EELoveButtonUsermod::_enabled[] PROGMEM = "enabled";
 
 
 static EELoveButtonUsermod ee_lovebutton_usermod;
